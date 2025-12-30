@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>共有カレンダー（期間・色指定）</title>
+    
+    <!-- Flatpickr (日付選択ライブラリ) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ja.js"></script>
+    <!-- SortableJS (ドラッグ＆ドロップライブラリ) -->
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+
+    <style>
+        :root {
+            --primary-color: #2a9d8f;
+            --bg-color: #f4f7f6;
+            --border-color: #ddd;
+            --text-color: #333;
+            --holiday-color: #e0535d;
+            --saturday-color: #007bff;
+            --secondary-color: #e76f51;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-color);
+            margin: 0; padding: 20px 0;
+            color: var(--text-color);
+        }
+
+        /* --- カレンダー枠 --- */
+        .calendar-container {
+            width: 95%; max-width: 1000px; margin: auto;
+            background: #fff; border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        /* 編集モード時のスタイル */
+        .calendar-container.editing-mode {
+            box-shadow: 0 0 0 4px rgba(231, 111, 81, 0.5);
+        }
+        .calendar-container.editing-mode .calendar-header {
+            background-color: var(--secondary-color);
+        }
+        .calendar-container.editing-mode .day-column {
+            pointer-events: auto; /* ドラッグ＆ドロップを有効化 */
+            border: 1px dashed var(--secondary-color);
+            background-color: rgba(231, 111, 81, 0.1);
+            border-radius: 4px;
+        }
+
+        /* --- ヘッダー --- */
+        .calendar-header {
+            display: flex; justify-content: center; align-items: center;
+            padding: 15px 20px; background-color: var(--primary-color); color: #fff;
+            position: relative;
+            transition: background-color 0.3s;
+        }
+        .header-left {
+            position: absolute; left: 20px;
+            display: flex; align-items: center;
+        }
+        .header-right {
+            position: absolute; right: 20px;
+            display: flex; align-items: center; gap: 10px;
+        }
+        .calendar-header button {
+            background: rgba(255,255,255,0.2); border: none; color: #fff;
+            padding: 5px 15px; border-radius: 4px; cursor: pointer; font-size: 1.2em;
+        }
+        .calendar-header button:hover { background: rgba(255,255,255,0.4); }
+        #btn-edit { font-size: 0.9em; }
+        #btn-edit.active {
+            background: #fff; color: var(--primary-color); font-weight: bold;
+        }
+        .calendar-container.editing-mode #btn-edit.active {
+            color: var(--secondary-color);
+        }
+        #month-year { font-size: 1.4em; font-weight: bold; margin: 0; }
+
+        /* --- グリッド (New) --- */
+        .calendar-grid-header {
+            display: grid; grid-template-columns: repeat(7, 1fr);
+            background: #f9f9f9; border-bottom: 1px solid var(--border-color);
+        }
+        .header-cell {
+            padding: 10px; text-align: center; font-size: 0.9em; color: #666;
+            border-right: 1px solid var(--border-color);
+        }
+        .week-row {
+            position: relative; border-bottom: 1px solid var(--border-color);
+            min-height: 120px;
+        }
+        .week-bg {
+            display: grid; grid-template-columns: repeat(7, 1fr);
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 0;
+        }
+        .day-cell-bg {
+            border-right: 1px solid var(--border-color); background: #fff;
+            transition: background 0.2s; cursor: pointer;
+        }
+        .day-cell-bg:hover { background-color: #f0f8ff; }
+        
+        .week-content {
+            position: relative; z-index: 1;
+            display: grid; grid-template-columns: repeat(7, 1fr);
+            pointer-events: none;
+            height: 100%;
+        }
+        .day-column {
+            position: relative;
+            display: flex; flex-direction: column; gap: 2px;
+            padding: 30px 2px 5px 2px; /* 上部は日付数字用に空ける */
+            height: 100%; box-sizing: border-box;
+        }
+        .day-number-container {
+            position: absolute; top: 2px; left: 2px; pointer-events: none; z-index: 5;
+        }
+
+        /* --- 日付数字 --- */
+        .day-number {
+            font-size: 0.8em; display: inline-flex; justify-content: center; align-items: center;
+            width: 24px; height: 24px; border-radius: 50%;
+        }
+        .day-number.holiday { color: var(--holiday-color); }
+        .day-number.saturday { color: var(--saturday-color); }
+        .day-number.today {
+            background-color: var(--primary-color);
+            color: #fff !important;
+        }
+        .holiday-name {
+            font-size: 0.7em; color: var(--holiday-color); display: inline; margin-left: 4px;
+        }
+
+        /* --- イベントバー表示 --- */
+        .event-bar {
+            position: relative; margin: 1px 2px;
+            font-size: 0.75em; padding: 2px 4px;
+            border-radius: 3px; color: #fff; 
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+            cursor: pointer; pointer-events: auto;
+            
+            /* Wrapping */
+            white-space: normal;
+            word-break: break-word;
+            line-height: 1.2;
+        }
+        /* 編集モード時のカーソル */
+        .calendar-container.editing-mode .event-bar { cursor: grab; }
+        .calendar-container.editing-mode .event-bar:active { cursor: grabbing; }
+
+        /* 連結用スタイル */
+        .event-bar.is-start { border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -2px; z-index: 2; }
+        .event-bar.is-end { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -2px; z-index: 2; }
+        .event-bar.is-middle { border-radius: 0; margin-left: -2px; margin-right: -2px; z-index: 1; }
+        .event-bar.is-single { z-index: 3; }
+
+        /* --- モーダル --- */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); display: none; z-index: 1000;
+            justify-content: center; align-items: center;
+        }
+        .modal-content {
+            background: #fff; padding: 25px; border-radius: 8px;
+            width: 90%; max-width: 400px; box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+        .modal-header {
+            display: flex; justify-content: space-between; margin-bottom: 20px;
+            border-bottom: 1px solid #eee; padding-bottom: 10px;
+        }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; font-size: 0.9em; color: #666; margin-bottom: 5px; }
+        .form-group input[type="text"], .form-group input[type="date"], .flatpickr-input {
+            width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;
+            box-sizing: border-box; font-size: 1em;
+        }
+        .form-group textarea {
+            width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;
+            box-sizing: border-box; font-size: 1em; resize: vertical; min-height: 60px;
+        }
+        
+        /* 色選択ラジオボタン */
+        .color-picker { display: flex; gap: 10px; }
+        .color-option {
+            width: 30px; height: 30px; border-radius: 50%; cursor: pointer;
+            border: 2px solid transparent; transition: transform 0.2s;
+        }
+        .color-option:hover { transform: scale(1.1); }
+        .color-option.selected {
+            border-color: #fff; /* 内側に白枠を表示 */
+            box-shadow: 0 0 0 2px #333; /* 外側に黒枠のような影を追加 */
+            transform: scale(1.1);
+        }
+
+        /* モード切替スイッチ */
+        .mode-switch { display: flex; gap: 15px; margin-bottom: 5px; }
+        .mode-switch label { display: flex; align-items: center; gap: 5px; cursor: pointer; font-weight: normal; font-size: 0.9em; }
+
+        .modal-footer {
+            display: flex; justify-content: space-between; margin-top: 25px;
+        }
+        .btn {
+            padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;
+        }
+        .btn-save { background: var(--primary-color); color: #fff; }
+        .btn-delete { background: #e0535d; color: #fff; }
+        .btn-cancel { background: #ccc; color: #333; }
+
+        /* --- ローディング/保存ステータス --- */
+        #status-msg {
+            position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.8); color: #fff; padding: 8px 20px;
+            border-radius: 20px; font-size: 0.9em; opacity: 0; transition: opacity 0.3s;
+            pointer-events: none; z-index: 2000;
+        }
+        #status-msg.visible { opacity: 1; }
+
+        /* Flatpickrのカレンダーをモーダルより前面に表示 */
+        .flatpickr-calendar { z-index: 2000 !important; }
+
+    </style>
+</head>
+<body>
+
+    <div id="status-msg"></div>
+
+    <div class="calendar-container">
+        <div class="calendar-header">
+            <div class="header-left">
+                <button id="prev-month">&lt;</button>
+            </div>
+            <h2 id="month-year"></h2>
+            <div class="header-right">
+                <button id="btn-edit">編集</button>
+                <button id="next-month">&gt;</button>
+            </div>
+        </div>
+        <div id="calendar-view"></div>
+    </div>
+
+    <!-- 編集モーダル -->
+    <div id="event-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">予定の編集</h3>
+                <span style="cursor:pointer; font-size:1.5em;" id="modal-close">&times;</span>
+            </div>
+            
+            <div class="form-group">
+                <label>タイトル</label>
+                <input type="text" id="input-title" placeholder="予定を入力...">
+            </div>
+
+            <div class="form-group" id="mode-select-group">
+                <label>登録モード</label>
+                <div class="mode-switch">
+                    <label><input type="radio" name="date-mode" value="range" checked> 期間 (連続)</label>
+                    <label><input type="radio" name="date-mode" value="multiple"> 複数日 (個別)</label>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>期間</label>
+                <input type="text" id="input-range" placeholder="日付を選択..." readonly>
+                <input type="hidden" id="input-start">
+                <input type="hidden" id="input-end">
+            </div>
+
+            <div class="form-group">
+                <label>メモ</label>
+                <textarea id="input-memo" placeholder="詳細を入力..."></textarea>
+            </div>
+
+            <div class="form-group">
+                <label>色</label>
+                <div class="color-picker" id="color-picker">
+                    <!-- JSで生成 -->
+                </div>
+                <input type="hidden" id="input-color">
+            </div>
+
+            <input type="hidden" id="input-id">
+
+            <div class="modal-footer">
+                <button class="btn btn-delete" id="btn-delete" style="display:none;">削除</button>
+                <div>
+                    <button class="btn btn-cancel" id="btn-cancel">キャンセル</button>
+                    <button class="btn btn-save" id="btn-save">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class CalendarApp {
+            constructor() {
+                this.config = {
+                    // ★ここに新しいGASのURLを貼り付けてください
+                    API_URL: 'https://script.google.com/macros/s/AKfycbwdCDJYKroipx0QHG8D9P3B2V1ZiX5_ljhO9hHxae1ILTUXa7XOBQAYJBXEG9c6PQie/exec',
+                    COLORS: ['#e76f51', '#f4a261', '#e9c46a', '#2a9d8f', '#264653', '#007bff', '#6f42c1', '#6c757d']
+                };
+                
+                this.state = {
+                    currentDate: new Date(),
+                    events: [],
+                    holidays: {},
+                    initialForm: {}
+                };
+                
+                this.ui = {};
+                this.datePicker = null;
+                this.currentMode = 'range';
+                this.isEditing = false;
+                this.sortables = [];
+            }
+
+            init() {
+                this.cacheDOM();
+                this.initColorPicker();
+                this.initDatePicker('range');
+                this.bindEvents();
+                this.fetchHolidays().then(() => this.renderCalendar());
+                this.fetchEvents();
+            }
+
+            cacheDOM() {
+                this.ui = {
+                    monthYear: document.getElementById('month-year'),
+                    calendarView: document.getElementById('calendar-view'),
+                    modal: document.getElementById('event-modal'),
+                    container: document.querySelector('.calendar-container'),
+                    status: document.getElementById('status-msg'),
+                    inputs: {
+                        id: document.getElementById('input-id'),
+                        title: document.getElementById('input-title'),
+                        start: document.getElementById('input-start'),
+                        end: document.getElementById('input-end'),
+                        color: document.getElementById('input-color'),
+                        memo: document.getElementById('input-memo')
+                    },
+                    btns: {
+                        save: document.getElementById('btn-save'),
+                        delete: document.getElementById('btn-delete'),
+                        cancel: document.getElementById('btn-cancel'),
+                        close: document.getElementById('modal-close'),
+                        edit: document.getElementById('btn-edit')
+                    }
+                };
+            }
+
+            initColorPicker() {
+                const container = document.getElementById('color-picker');
+                this.config.COLORS.forEach((color, index) => {
+                    const div = document.createElement('div');
+                    div.className = 'color-option';
+                    div.style.backgroundColor = color;
+                    div.onclick = () => this.selectColor(color, div);
+                    if (index === 3) this.selectColor(color, div); // デフォルト選択
+                    container.appendChild(div);
+                });
+            }
+
+            initDatePicker(mode) {
+                if (this.datePicker) this.datePicker.destroy();
+                this.currentMode = mode;
+
+                this.datePicker = flatpickr("#input-range", {
+                    mode: mode,
+                    locale: "ja",
+                    dateFormat: "Y-m-d",
+                    conjunction: mode === 'range' ? " ～ " : ", ",
+                    onChange: (selectedDates, dateStr, instance) => {
+                        if (mode === 'range' && selectedDates.length > 0) {
+                            this.ui.inputs.start.value = this.formatDate(selectedDates[0]);
+                            this.ui.inputs.end.value = this.formatDate(selectedDates[1] || selectedDates[0]);
+                        }
+                    }
+                });
+            }
+
+            bindEvents() {
+                document.getElementById('prev-month').onclick = () => this.changeMonth(-1);
+                document.getElementById('next-month').onclick = () => this.changeMonth(1);
+                
+                this.ui.btns.close.onclick = () => this.confirmAndClose();
+                this.ui.btns.cancel.onclick = () => this.confirmAndClose();
+                this.ui.modal.onclick = (e) => { if(e.target === this.ui.modal) this.confirmAndClose(); };
+                
+                this.ui.btns.save.onclick = () => this.saveEvent();
+                this.ui.btns.delete.onclick = () => this.deleteEvent();
+                
+                this.ui.btns.edit.onclick = () => this.toggleEditMode();
+
+                document.querySelectorAll('input[name="date-mode"]').forEach(radio => {
+                    radio.onchange = (e) => this.initDatePicker(e.target.value);
+                });
+
+                this.ui.calendarView.addEventListener('click', (e) => this.handleCalendarClick(e));
+            }
+
+            // --- API Methods ---
+            async fetchHolidays() {
+                try {
+                    const res = await fetch('https://holidays-jp.github.io/api/v1/date.json');
+                    this.state.holidays = await res.json();
+                } catch (e) { console.error('祝日取得失敗', e); }
+            }
+
+            async fetchEvents() {
+                this.showStatus('読み込み中...');
+                const y = this.state.currentDate.getFullYear();
+                const m = this.state.currentDate.getMonth();
+                const start = this.formatDate(new Date(y, m - 1, 20));
+                const end = this.formatDate(new Date(y, m + 1, 15));
+
+                try {
+                    const res = await fetch(`${this.config.API_URL}?start=${start}&end=${end}`);
+                    const newEvents = await res.json();
+                    
+                    if (!Array.isArray(newEvents)) {
+                        console.error('API response error:', newEvents);
+                        throw new Error('Invalid data format received');
+                    }
+                    
+                    this.state.events = this.state.events.filter(e => e.start > end || e.end < start);
+                    this.state.events = this.state.events.concat(newEvents);
+                    
+                    this.renderCalendar();
+                    this.showStatus('完了', 1000);
+                } catch (e) {
+                    this.showStatus('エラー発生', 3000);
+                    console.error(e);
+                }
+            }
+
+            async postEvent(action, eventData, silent = false) {
+                if (!silent) this.showStatus('クラウドに保存中...');
+                try {
+                    await fetch(this.config.API_URL, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        headers: { 'Content-Type': 'text/plain' },
+                        body: JSON.stringify({ action, event: eventData })
+                    });
+                    if (!silent) this.showStatus('保存完了', 2000);
+                } catch (e) {
+                    if (!silent) this.showStatus('保存失敗', 3000);
+                }
+            }
+
+            // --- Logic & UI Methods ---
+            handleCalendarClick(e) {
+                // イベントバーがクリックされた場合
+                const eventBar = e.target.closest('.event-bar');
+                if (eventBar) {
+                    if (this.isEditing) return;
+                    const eventId = eventBar.dataset.eventId;
+                    const event = this.state.events.find(e => e.id === eventId);
+                    if (event) this.openModal(event);
+                    return;
+                }
+
+                // 日付セル（背景）がクリックされた場合
+                const dayCell = e.target.closest('.day-cell-bg');
+                if (dayCell) {
+                    const dateStr = dayCell.dataset.date;
+                    if (dateStr) this.openModal({ start: dateStr, end: dateStr });
+                }
+            }
+
+            toggleEditMode() {
+                this.isEditing = !this.isEditing;
+                this.ui.btns.edit.classList.toggle('active', this.isEditing);
+                this.ui.container.classList.toggle('editing-mode', this.isEditing);
+                
+                if (this.isEditing) {
+                    this.initSortables();
+                    this.showStatus('ドラッグで日付を移動できます', 2000);
+                } else {
+                    this.destroySortables();
+                }
+            }
+
+            initSortables() {
+                this.destroySortables();
+                const columns = document.querySelectorAll('.day-column');
+                columns.forEach(col => {
+                    const sortable = new Sortable(col, {
+                        group: 'calendar-events',
+                        animation: 150,
+                        draggable: '.event-bar',
+                        onEnd: (evt) => this.handleDrop(evt)
+                    });
+                    this.sortables.push(sortable);
+                });
+            }
+
+            destroySortables() {
+                this.sortables.forEach(s => s.destroy());
+                this.sortables = [];
+            }
+
+            handleDrop(evt) {
+                const eventId = evt.item.dataset.eventId;
+                const oldDateStr = evt.from.dataset.date;
+                const newDateStr = evt.to.dataset.date;
+
+                if (oldDateStr === newDateStr) return; // 同じ日なら何もしない（並び順は自動ソートされるため）
+
+                const diffTime = new Date(newDateStr) - new Date(oldDateStr);
+                const diffDays = diffTime / (1000 * 60 * 60 * 24);
+
+                const event = this.state.events.find(e => e.id === eventId);
+                if (!event) return;
+
+                // 日付を更新
+                const s = new Date(event.start);
+                const e = new Date(event.end);
+                s.setDate(s.getDate() + diffDays);
+                e.setDate(e.getDate() + diffDays);
+                
+                event.start = this.formatDate(s);
+                event.end = this.formatDate(e);
+
+                // 保存して再描画
+                this.postEvent('upsert', event, true);
+                this.renderCalendar();
+            }
+
+            changeMonth(diff) {
+                this.state.currentDate.setMonth(this.state.currentDate.getMonth() + diff);
+                this.renderCalendar();
+                this.fetchEvents();
+            }
+
+            renderCalendar() {
+                const y = this.state.currentDate.getFullYear();
+                const m = this.state.currentDate.getMonth();
+                this.ui.monthYear.textContent = `${y}年 ${m + 1}月`;
+                
+                const container = this.ui.calendarView;
+                container.innerHTML = '';
+
+                this.renderHeader(container);
+                this.renderWeeks(container, y, m);
+                
+                if (this.isEditing) this.initSortables(); // 再描画後もSortableを適用
+            }
+
+            renderHeader(container) {
+                const header = document.createElement('div');
+                header.className = 'calendar-grid-header';
+                ['日','月','火','水','木','金','土'].forEach((d, i) => {
+                    const cell = document.createElement('div');
+                    cell.className = 'header-cell';
+                    cell.textContent = d;
+                    if(i===0) cell.style.color = 'var(--holiday-color)';
+                    if(i===6) cell.style.color = 'var(--saturday-color)';
+                    header.appendChild(cell);
+                });
+                container.appendChild(header);
+            }
+
+            renderWeeks(container, y, m) {
+                const firstDay = new Date(y, m, 1);
+                const lastDay = new Date(y, m + 1, 0);
+                const todayStr = this.formatDate(new Date());
+                
+                let current = new Date(firstDay);
+                current.setDate(1 - current.getDay());
+
+                for (let row = 0; row < 6; row++) {
+                    const weekRow = document.createElement('div');
+                    weekRow.className = 'week-row';
+                    
+                    const weekBg = document.createElement('div');
+                    weekBg.className = 'week-bg';
+                    
+                    const weekContent = document.createElement('div');
+                    weekContent.className = 'week-content';
+
+                    for (let col = 0; col < 7; col++) {
+                        this.renderDay(current, m, todayStr, col, weekBg, weekContent);
+                        current.setDate(current.getDate() + 1);
+                    }
+
+                    weekRow.appendChild(weekBg);
+                    weekRow.appendChild(weekContent);
+                    container.appendChild(weekRow);
+
+                    if (current > lastDay && current.getDay() === 0) break;
+                }
+            }
+
+            renderDay(current, m, todayStr, col, weekBg, weekContent) {
+                const dateStr = this.formatDate(current);
+                
+                // Background Cell
+                const bgCell = document.createElement('div');
+                bgCell.className = 'day-cell-bg';
+                if (current.getMonth() !== m) bgCell.style.backgroundColor = '#f9f9f9';
+                bgCell.dataset.date = dateStr; // イベント委譲用にデータを埋め込む
+                weekBg.appendChild(bgCell);
+
+                // Day Column
+                const dayColumn = document.createElement('div');
+                dayColumn.className = 'day-column';
+                dayColumn.dataset.date = dateStr; // ドラッグ用
+
+                // Day Number
+                const dayNum = current.getDate();
+                const isHoliday = this.state.holidays[dateStr];
+                let dayClass = col === 0 ? 'holiday' : (col === 6 ? 'saturday' : (isHoliday ? 'holiday' : ''));
+                if (dateStr === todayStr) dayClass += ' today';
+                
+                const numDiv = document.createElement('div');
+                numDiv.className = 'day-number-container';
+                numDiv.innerHTML = `
+                    <span class="day-number ${dayClass}">${dayNum}</span>
+                    ${isHoliday ? `<span class="holiday-name">${this.state.holidays[dateStr]}</span>` : ''}
+                `;
+                dayColumn.appendChild(numDiv);
+
+                this.renderEvents(dayColumn, dateStr);
+
+                weekContent.appendChild(dayColumn);
+            }
+
+            renderEvents(container, dateStr) {
+                const dayEvents = this.state.events.filter(e => e.start <= dateStr && e.end >= dateStr);
+                dayEvents.sort((a, b) => {
+                    const durA = (new Date(a.end) - new Date(a.start));
+                    const durB = (new Date(b.end) - new Date(b.start));
+                    if (durA !== durB) return durB - durA;
+                    return a.start.localeCompare(b.start);
+                });
+
+                dayEvents.forEach(evt => {
+                    const div = document.createElement('div');
+                    div.className = 'event-bar';
+                    div.textContent = evt.title;
+                    div.style.backgroundColor = evt.color;
+                    div.style.color = this.getTextColorForBackground(evt.color);
+                    div.dataset.eventId = evt.id; // ドラッグ用
+
+                    if (evt.start < dateStr && evt.end > dateStr) div.classList.add('is-middle');
+                    else if (evt.start === dateStr && evt.end > dateStr) div.classList.add('is-start');
+                    else if (evt.start < dateStr && evt.end === dateStr) div.classList.add('is-end');
+                    else div.classList.add('is-single');
+
+                    container.appendChild(div);
+                });
+            }
+
+            openModal(eventData = {}) {
+                const isEdit = !!eventData.id;
+                document.getElementById('modal-title').textContent = isEdit ? '予定の編集' : '新しい予定';
+                
+                const modeGroup = document.getElementById('mode-select-group');
+                if (isEdit) {
+                    modeGroup.style.display = 'none';
+                    this.initDatePicker('range');
+                } else {
+                    modeGroup.style.display = 'block';
+                    document.querySelector('input[value="range"]').checked = true;
+                    this.initDatePicker('range');
+                }
+
+                this.ui.inputs.id.value = eventData.id || this.generateUUID();
+                this.ui.inputs.title.value = eventData.title || '';
+                this.ui.inputs.start.value = eventData.start || '';
+                this.ui.inputs.end.value = eventData.end || eventData.start || '';
+                this.ui.inputs.memo.value = eventData.memo || '';
+                
+                this.datePicker.setDate([this.ui.inputs.start.value, this.ui.inputs.end.value]);
+                this.selectColor(eventData.color || this.config.COLORS[3]);
+
+                this.ui.btns.delete.style.display = isEdit ? 'block' : 'none';
+                this.ui.modal.style.display = 'flex';
+                
+                this.state.initialForm = {
+                    title: this.ui.inputs.title.value,
+                    start: this.ui.inputs.start.value,
+                    end: this.ui.inputs.end.value,
+                    color: this.ui.inputs.color.value,
+                    memo: this.ui.inputs.memo.value
+                };
+            }
+
+            closeModal() {
+                this.ui.modal.style.display = 'none';
+            }
+
+            confirmAndClose() {
+                const current = {
+                    title: this.ui.inputs.title.value,
+                    start: this.ui.inputs.start.value,
+                    end: this.ui.inputs.end.value,
+                    color: this.ui.inputs.color.value,
+                    memo: this.ui.inputs.memo.value
+                };
+                
+                if (JSON.stringify(this.state.initialForm) !== JSON.stringify(current)) {
+                    if (!confirm('変更が保存されていません。\n破棄して閉じますか？')) return;
+                }
+                this.closeModal();
+            }
+
+            async saveEvent() {
+                if (this.currentMode === 'multiple') {
+                    const dates = this.datePicker.selectedDates;
+                    if (dates.length === 0) { alert('日付を選択してください'); return; }
+                    if (!this.ui.inputs.title.value) { alert('タイトルは必須です'); return; }
+
+                    const baseData = {
+                        title: this.ui.inputs.title.value,
+                        color: this.ui.inputs.color.value,
+                        memo: this.ui.inputs.memo.value
+                    };
+
+                    const newEvents = dates.map(d => ({
+                        ...baseData,
+                        id: this.generateUUID(),
+                        start: this.formatDate(d),
+                        end: this.formatDate(d)
+                    }));
+
+                    this.state.events.push(...newEvents);
+                    this.renderCalendar();
+                    this.state.initialForm = {};
+                    this.closeModal();
+
+                    this.showStatus('一括保存中...');
+                    newEvents.forEach(evt => this.postEvent('upsert', evt, true));
+                    return;
+                }
+
+                const data = {
+                    id: this.ui.inputs.id.value,
+                    title: this.ui.inputs.title.value,
+                    start: this.ui.inputs.start.value,
+                    end: this.ui.inputs.end.value,
+                    color: this.ui.inputs.color.value,
+                    memo: this.ui.inputs.memo.value
+                };
+
+                if (!data.title || !data.start) { alert('タイトルと開始日は必須です'); return; }
+                if (data.start > data.end) { alert('終了日は開始日より後にしてください'); return; }
+
+                const idx = this.state.events.findIndex(e => e.id === data.id);
+                if (idx > -1) this.state.events[idx] = data;
+                else this.state.events.push(data);
+
+                this.renderCalendar();
+                this.state.initialForm = {};
+                this.closeModal();
+
+                this.postEvent('upsert', data);
+            }
+
+            deleteEvent() {
+                if (!confirm('本当に削除しますか？')) return;
+                const id = this.ui.inputs.id.value;
+                this.state.events = this.state.events.filter(e => e.id !== id);
+                this.renderCalendar();
+                this.closeModal();
+                this.postEvent('delete', { id: id });
+            }
+
+            // --- Utils ---
+            selectColor(color, element) {
+                this.ui.inputs.color.value = color;
+                document.querySelectorAll('.color-option').forEach(el => el.classList.remove('selected'));
+                if (element) element.classList.add('selected');
+                else {
+                    const target = Array.from(document.querySelectorAll('.color-option'))
+                        .find(el => el.style.backgroundColor === color || this.rgbToHex(el.style.backgroundColor) === color);
+                    if (target) target.classList.add('selected');
+                }
+            }
+
+            rgbToHex(rgb) {
+                if (!rgb.startsWith('rgb')) return rgb;
+                const [r, g, b] = rgb.match(/\d+/g);
+                return "#" + ((1 << 24) + (+r << 16) + (+g << 8) + +b).toString(16).slice(1);
+            }
+
+            getTextColorForBackground(hex) {
+                if (!hex) return '#fff';
+                if (hex.startsWith('#')) hex = hex.slice(1);
+                if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+                const r = parseInt(hex.substring(0, 2), 16);
+                const g = parseInt(hex.substring(2, 4), 16);
+                const b = parseInt(hex.substring(4, 6), 16);
+                const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+                return (yiq >= 128) ? '#333' : '#fff';
+            }
+
+            formatDate(d) {
+                return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+            }
+
+            generateUUID() {
+                if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+                    return crypto.randomUUID();
+                }
+                return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+                    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+                    return v.toString(16);
+                });
+            }
+
+            showStatus(msg, duration) {
+                this.ui.status.textContent = msg;
+                this.ui.status.classList.add('visible');
+                if (duration) setTimeout(() => this.ui.status.classList.remove('visible'), duration);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            new CalendarApp().init();
+        });
+    </script>
+</body>
+</html>
