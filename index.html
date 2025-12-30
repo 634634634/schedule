@@ -112,17 +112,20 @@
         .day-column {
             position: relative;
             display: flex; flex-direction: column; gap: 2px;
-            padding: 30px 2px 5px 2px; /* 上部は日付数字用に空ける */
+            padding: 22px 2px 5px 2px; /* 上部は日付数字用に空ける */
             height: 100%; box-sizing: border-box;
         }
         .day-number-container {
             position: absolute; top: 2px; left: 2px; pointer-events: none; z-index: 5;
+            right: 2px;
+            display: flex; align-items: center;
         }
 
         /* --- 日付数字 --- */
         .day-number {
-            font-size: 0.8em; display: inline-flex; justify-content: center; align-items: center;
-            width: 24px; height: 24px; border-radius: 50%;
+            font-size: 0.75em; display: inline-flex; justify-content: center; align-items: center;
+            width: 20px; height: 20px; border-radius: 50%;
+            flex-shrink: 0;
         }
         .day-number.holiday { color: var(--holiday-color); }
         .day-number.saturday { color: var(--saturday-color); }
@@ -131,7 +134,12 @@
             color: #fff !important;
         }
         .holiday-name {
-            font-size: 0.7em; color: var(--holiday-color); display: inline; margin-left: 4px;
+            font-size: 0.6em; color: var(--holiday-color); margin-left: 0;
+            line-height: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-width: 0;
         }
 
         /* --- イベントバー表示 --- */
@@ -295,6 +303,34 @@
     </div>
 
     <script>
+        // --- API Service ---
+        class ApiService {
+            constructor(apiUrl) {
+                this.apiUrl = apiUrl;
+            }
+
+            async fetchHolidays() {
+                const res = await fetch('https://holidays-jp.github.io/api/v1/date.json');
+                return await res.json();
+            }
+
+            async fetchEvents(start, end) {
+                const res = await fetch(`${this.apiUrl}?start=${start}&end=${end}`);
+                const data = await res.json();
+                if (!Array.isArray(data)) throw new Error('Invalid data format');
+                return data;
+            }
+
+            async postEvent(action, eventData) {
+                await fetch(this.apiUrl, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: JSON.stringify({ action, event: eventData })
+                });
+            }
+        }
+
         class CalendarApp {
             constructor() {
                 this.config = {
@@ -303,6 +339,7 @@
                     COLORS: ['#e76f51', '#f4a261', '#e9c46a', '#2a9d8f', '#264653', '#007bff', '#6f42c1', '#6c757d']
                 };
                 
+                this.api = new ApiService(this.config.API_URL);
                 this.state = {
                     currentDate: new Date(),
                     events: [],
@@ -315,6 +352,7 @@
                 this.currentMode = 'range';
                 this.isEditing = false;
                 this.sortables = [];
+                this.touchStartX = 0;
             }
 
             init() {
@@ -399,13 +437,20 @@
                 });
 
                 this.ui.calendarView.addEventListener('click', (e) => this.handleCalendarClick(e));
+                
+                // スワイプ操作
+                this.ui.calendarView.addEventListener('touchstart', (e) => {
+                    this.touchStartX = e.changedTouches[0].screenX;
+                }, { passive: true });
+                this.ui.calendarView.addEventListener('touchend', (e) => {
+                    this.handleSwipe(e.changedTouches[0].screenX);
+                }, { passive: true });
             }
 
             // --- API Methods ---
             async fetchHolidays() {
                 try {
-                    const res = await fetch('https://holidays-jp.github.io/api/v1/date.json');
-                    this.state.holidays = await res.json();
+                    this.state.holidays = await this.api.fetchHolidays();
                 } catch (e) { console.error('祝日取得失敗', e); }
             }
 
@@ -417,13 +462,7 @@
                 const end = this.formatDate(new Date(y, m + 1, 15));
 
                 try {
-                    const res = await fetch(`${this.config.API_URL}?start=${start}&end=${end}`);
-                    const newEvents = await res.json();
-                    
-                    if (!Array.isArray(newEvents)) {
-                        console.error('API response error:', newEvents);
-                        throw new Error('Invalid data format received');
-                    }
+                    const newEvents = await this.api.fetchEvents(start, end);
                     
                     this.state.events = this.state.events.filter(e => e.start > end || e.end < start);
                     this.state.events = this.state.events.concat(newEvents);
@@ -439,12 +478,7 @@
             async postEvent(action, eventData, silent = false) {
                 if (!silent) this.showStatus('クラウドに保存中...');
                 try {
-                    await fetch(this.config.API_URL, {
-                        method: 'POST',
-                        mode: 'no-cors',
-                        headers: { 'Content-Type': 'text/plain' },
-                        body: JSON.stringify({ action, event: eventData })
-                    });
+                    await this.api.postEvent(action, eventData);
                     if (!silent) this.showStatus('保存完了', 2000);
                 } catch (e) {
                     if (!silent) this.showStatus('保存失敗', 3000);
@@ -469,6 +503,13 @@
                     const dateStr = dayCell.dataset.date;
                     if (dateStr) this.openModal({ start: dateStr, end: dateStr });
                 }
+            }
+
+            handleSwipe(endX) {
+                if (this.isEditing) return; // 編集モード中は誤操作防止のため無効化
+                const threshold = 50;
+                if (endX < this.touchStartX - threshold) this.changeMonth(1); // 左スワイプ（進む）
+                if (endX > this.touchStartX + threshold) this.changeMonth(-1); // 右スワイプ（戻る）
             }
 
             toggleEditMode() {
@@ -618,10 +659,7 @@
                 
                 const numDiv = document.createElement('div');
                 numDiv.className = 'day-number-container';
-                numDiv.innerHTML = `
-                    <span class="day-number ${dayClass}">${dayNum}</span>
-                    ${isHoliday ? `<span class="holiday-name">${this.state.holidays[dateStr]}</span>` : ''}
-                `;
+                numDiv.innerHTML = `<span class="day-number ${dayClass}">${dayNum}</span>${isHoliday ? `<span class="holiday-name">${this.state.holidays[dateStr]}</span>` : ''}`;
                 dayColumn.appendChild(numDiv);
 
                 this.renderEvents(dayColumn, dateStr);
@@ -657,7 +695,18 @@
 
             openModal(eventData = {}) {
                 const isEdit = !!eventData.id;
-                document.getElementById('modal-title').textContent = isEdit ? '予定の編集' : '新しい予定';
+                
+                let dateText = '';
+                if (eventData.start) {
+                    const [y, m, d] = eventData.start.split('-').map(Number);
+                    const holiday = this.state.holidays[eventData.start];
+                    dateText = `${m}/${d}`;
+                    if (holiday) dateText += ` ${holiday}`;
+                }
+
+                const titleText = isEdit ? '予定の編集' : '新しい予定';
+                const titleEl = document.getElementById('modal-title');
+                titleEl.innerHTML = dateText ? `<div style="font-size:0.7em; color:#666; font-weight:normal; margin-bottom:2px;">${dateText}</div>${titleText}` : titleText;
                 
                 const modeGroup = document.getElementById('mode-select-group');
                 if (isEdit) {
@@ -711,33 +760,40 @@
 
             async saveEvent() {
                 if (this.currentMode === 'multiple') {
-                    const dates = this.datePicker.selectedDates;
-                    if (dates.length === 0) { alert('日付を選択してください'); return; }
-                    if (!this.ui.inputs.title.value) { alert('タイトルは必須です'); return; }
-
-                    const baseData = {
-                        title: this.ui.inputs.title.value,
-                        color: this.ui.inputs.color.value,
-                        memo: this.ui.inputs.memo.value
-                    };
-
-                    const newEvents = dates.map(d => ({
-                        ...baseData,
-                        id: this.generateUUID(),
-                        start: this.formatDate(d),
-                        end: this.formatDate(d)
-                    }));
-
-                    this.state.events.push(...newEvents);
-                    this.renderCalendar();
-                    this.state.initialForm = {};
-                    this.closeModal();
-
-                    this.showStatus('一括保存中...');
-                    newEvents.forEach(evt => this.postEvent('upsert', evt, true));
-                    return;
+                    await this.saveMultipleEvents();
+                } else {
+                    await this.saveSingleEvent();
                 }
+            }
 
+            async saveMultipleEvents() {
+                const dates = this.datePicker.selectedDates;
+                if (dates.length === 0) { alert('日付を選択してください'); return; }
+                if (!this.ui.inputs.title.value) { alert('タイトルは必須です'); return; }
+
+                const baseData = {
+                    title: this.ui.inputs.title.value,
+                    color: this.ui.inputs.color.value,
+                    memo: this.ui.inputs.memo.value
+                };
+
+                const newEvents = dates.map(d => ({
+                    ...baseData,
+                    id: this.generateUUID(),
+                    start: this.formatDate(d),
+                    end: this.formatDate(d)
+                }));
+
+                this.state.events.push(...newEvents);
+                this.renderCalendar();
+                this.state.initialForm = {};
+                this.closeModal();
+
+                this.showStatus('一括保存中...');
+                newEvents.forEach(evt => this.postEvent('upsert', evt, true));
+            }
+
+            async saveSingleEvent() {
                 const data = {
                     id: this.ui.inputs.id.value,
                     title: this.ui.inputs.title.value,
