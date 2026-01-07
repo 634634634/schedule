@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>月間予定表（期間・色指定）</title>
+    <title>月間予定表</title>
     
     <!-- Flatpickr (日付選択ライブラリ) -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
@@ -335,7 +335,7 @@
             constructor() {
                 this.config = {
                     // ★ここに新しいGASのURLを貼り付けてください
-                    API_URL: 'https://script.google.com/macros/s/AKfycbwdCDJYKroipx0QHG8D9P3B2V1ZiX5_ljhO9hHxae1ILTUXa7XOBQAYJBXEG9c6PQie/exec',
+                    API_URL: 'https://script.google.com/macros/s/AKfycbwhxNwFdD7AQer3TxhHcWeocINGO3ZgWiYB4sig10r483a77GtB6x2CuX0N_YQssXkP/exec',
                     COLORS: ['#e76f51', '#f4a261', '#e9c46a', '#2a9d8f', '#264653', '#007bff', '#6f42c1', '#6c757d']
                 };
                 
@@ -544,31 +544,57 @@
                 this.sortables = [];
             }
 
-            handleDrop(evt) {
+            async handleDrop(evt) {
                 const eventId = evt.item.dataset.eventId;
                 const oldDateStr = evt.from.dataset.date;
                 const newDateStr = evt.to.dataset.date;
 
-                if (oldDateStr === newDateStr) return; // 同じ日なら何もしない（並び順は自動ソートされるため）
+                const movedEvent = this.state.events.find(e => e.id === eventId);
+                if (!movedEvent) return;
 
-                const diffTime = new Date(newDateStr) - new Date(oldDateStr);
-                const diffDays = diffTime / (1000 * 60 * 60 * 24);
+                // 1. 日付の更新（移動があった場合）
+                if (oldDateStr !== newDateStr) {
+                    const diffTime = new Date(newDateStr) - new Date(oldDateStr);
+                    const diffDays = diffTime / (1000 * 60 * 60 * 24);
 
-                const event = this.state.events.find(e => e.id === eventId);
-                if (!event) return;
+                    const s = new Date(movedEvent.start);
+                    const e = new Date(movedEvent.end);
+                    s.setDate(s.getDate() + diffDays);
+                    e.setDate(e.getDate() + diffDays);
+                    
+                    movedEvent.start = this.formatDate(s);
+                    movedEvent.end = this.formatDate(e);
+                }
 
-                // 日付を更新
-                const s = new Date(event.start);
-                const e = new Date(event.end);
-                s.setDate(s.getDate() + diffDays);
-                e.setDate(e.getDate() + diffDays);
+                // 2. 並び順の更新（移動先の全イベントを再インデックス）
+                const newOrderIds = Array.from(evt.to.querySelectorAll('.event-bar')).map(el => el.dataset.eventId);
+                const eventsToUpdate = [];
                 
-                event.start = this.formatDate(s);
-                event.end = this.formatDate(e);
+                // 日付変更があった場合は必ず保存対象にする
+                if (oldDateStr !== newDateStr) eventsToUpdate.push(movedEvent);
 
-                // 保存して再描画
-                this.postEvent('upsert', event, true);
+                newOrderIds.forEach((id, index) => {
+                    const ev = this.state.events.find(e => e.id === id);
+                    if (ev) {
+                        if (ev.order !== index) {
+                            ev.order = index;
+                            if (!eventsToUpdate.includes(ev)) eventsToUpdate.push(ev);
+                        }
+                    }
+                });
+
+                // 3. 保存と再描画
                 this.renderCalendar();
+                
+                if (eventsToUpdate.length > 0) {
+                    this.showStatus(`${eventsToUpdate.length}件を保存中...`);
+                    try {
+                        await Promise.all(eventsToUpdate.map(ev => this.api.postEvent('upsert', ev)));
+                        this.showStatus('保存完了', 2000);
+                    } catch (e) {
+                        this.showStatus('保存失敗', 3000);
+                    }
+                }
             }
 
             changeMonth(diff) {
@@ -670,6 +696,13 @@
             renderEvents(container, dateStr) {
                 const dayEvents = this.state.events.filter(e => e.start <= dateStr && e.end >= dateStr);
                 dayEvents.sort((a, b) => {
+                    // orderによるソートを優先
+                    if (a.order !== undefined || b.order !== undefined) {
+                        const orderA = a.order !== undefined ? a.order : 9999;
+                        const orderB = b.order !== undefined ? b.order : 9999;
+                        if (orderA !== orderB) return orderA - orderB;
+                    }
+
                     const durA = (new Date(a.end) - new Date(a.start));
                     const durB = (new Date(b.end) - new Date(b.start));
                     if (durA !== durB) return durB - durA;
@@ -807,7 +840,7 @@
                 if (data.start > data.end) { alert('終了日は開始日より後にしてください'); return; }
 
                 const idx = this.state.events.findIndex(e => e.id === data.id);
-                if (idx > -1) this.state.events[idx] = data;
+                if (idx > -1) this.state.events[idx] = { ...this.state.events[idx], ...data };
                 else this.state.events.push(data);
 
                 this.renderCalendar();
