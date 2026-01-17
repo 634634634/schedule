@@ -28,6 +28,7 @@
             background-color: var(--bg-color);
             margin: 0; padding: 20px 0;
             color: var(--text-color);
+            -webkit-text-size-adjust: 100%;
         }
 
         /* --- カレンダー枠 --- */
@@ -119,6 +120,21 @@
             position: absolute; top: 2px; left: 2px; pointer-events: none; z-index: 5;
             right: 2px;
             display: flex; align-items: center;
+            justify-content: space-between;
+            gap: 2px;
+        }
+        .day-meta-left {
+            display: flex; align-items: center; gap: 2px;
+            flex-shrink: 1; overflow: hidden;
+        }
+        .day-meta-right {
+            display: flex; flex-direction: column; align-items: flex-end;
+            flex-shrink: 0;
+        }
+        .day-meta-right.grid-mode {
+            display: grid;
+            grid-template-columns: repeat(2, auto);
+            gap: 0 2px;
         }
 
         /* --- 日付数字 --- */
@@ -134,12 +150,41 @@
             color: #fff !important;
         }
         .holiday-name {
-            font-size: 0.6em; color: var(--holiday-color); margin-left: 0;
+            font-size: 0.6em; color: var(--holiday-color);
             line-height: 1;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
             min-width: 0;
+        }
+        /* --- 吉日 --- */
+        .kichijitsu {
+            font-size: 0.6em;
+            white-space: nowrap;
+            line-height: 1.1;
+        }
+        .kichijitsu.ichimanbai {
+            color: #d4af37; /* 金色 */
+            font-weight: bold;
+        }
+        .kichijitsu.tensha {
+            color: #e0535d; /* 赤 */
+            font-weight: bold;
+        }
+        .kichijitsu.tora {
+            color: #f4a261; /* 虎色(オレンジ) */
+            font-weight: bold;
+        }
+        .kichijitsu.mi {
+            color: #2a9d8f; /* 蛇色(青緑) */
+            font-weight: bold;
+        }
+        .kichijitsu.tsuchinoto-mi {
+            color: #b8860b; /* 濃い金 */
+            font-weight: bold;
+        }
+        .kichijitsu.fujoju {
+            color: #7f8c8d; /* グレー */
         }
 
         /* --- イベントバー表示 --- */
@@ -229,6 +274,13 @@
         /* Flatpickrのカレンダーをモーダルより前面に表示 */
         .flatpickr-calendar { z-index: 2000 !important; }
 
+        /* --- スマホ表示調整 --- */
+        @media (max-width: 768px) {
+            .kichijitsu { font-size: 0.5em; }
+            .day-number { font-size: 0.7em; }
+            .holiday-name { font-size: 0.5em; }
+        }
+
     </style>
 </head>
 <body>
@@ -303,6 +355,100 @@
     </div>
 
     <script>
+        // --- 吉日計算ヘルパー ---
+        const Kichijitsu = {
+            // 日の干支を求める (1900/1/1 = 甲戌(10) を基準)
+            getEto: function(date) {
+                const base = new Date(1900, 0, 1);
+                const diff = Math.floor((date - base) / (1000 * 60 * 60 * 24));
+                let num = (diff + 10) % 60;
+                if (num < 0) num += 60;
+                return num;
+            },
+            // 節月を求める (簡易計算: 1=小寒〜, 2=立春〜... 12=大雪〜)
+            getSetsuMonth: function(date) {
+                const m = date.getMonth() + 1;
+                const d = date.getDate();
+                // 各月の節入り日(近似値)
+                const setsuDays = [6, 4, 6, 5, 6, 6, 7, 8, 8, 8, 7, 7]; 
+                let month = m - 1; // 0-11
+                if (d < setsuDays[m - 1]) month = (month + 11) % 12;
+                return month + 1; // 1-12
+            },
+            get: function(date) {
+                const etoNum = this.getEto(date);
+                const shi = etoNum % 12; // 十二支 (0:子, 1:丑...)
+                const setsuM = this.getSetsuMonth(date);
+                const result = [];
+
+                // 一粒万倍日 (節月ごとの十二支)
+                // 1:小寒(12月節) -> 子, 卯 (定義:12月)
+                // 2:立春(正月節) -> 丑, 午 (定義:正月)
+                // ...
+                const ichimanbaiTable = {
+                    1: [0, 3],   // 12月節(小寒〜): 子, 卯
+                    2: [1, 6],   // 正月節(立春〜): 丑, 午
+                    3: [2, 9],   // 2月節(啓蟄〜): 寅, 酉
+                    4: [0, 3],   // 3月節(清明〜): 子, 卯
+                    5: [3, 4],   // 4月節(立夏〜): 卯, 辰
+                    6: [5, 6],   // 5月節(芒種〜): 巳, 午
+                    7: [6, 9],   // 6月節(小暑〜): 午, 酉
+                    8: [0, 7],   // 7月節(立秋〜): 子, 未
+                    9: [3, 8],   // 8月節(白露〜): 卯, 申
+                    10: [6, 9],  // 9月節(寒露〜): 午, 酉
+                    11: [9, 10], // 10月節(立冬〜): 酉, 戌
+                    12: [0, 11]  // 11月節(大雪〜): 子, 亥
+                };
+                if (ichimanbaiTable[setsuM] && ichimanbaiTable[setsuM].includes(shi)) {
+                    result.push({ label: '一粒万倍日', cls: 'ichimanbai' });
+                }
+
+                // 天赦日 (季節と干支)
+                let isTensha = false;
+                if (setsuM >= 2 && setsuM <= 4) { if (etoNum === 14) isTensha = true; } // 春: 戊寅
+                else if (setsuM >= 5 && setsuM <= 7) { if (etoNum === 30) isTensha = true; } // 夏: 甲午
+                else if (setsuM >= 8 && setsuM <= 10) { if (etoNum === 44) isTensha = true; } // 秋: 戊申
+                else { if (etoNum === 0) isTensha = true; } // 冬: 甲子
+                if (isTensha) result.push({ label: '天赦日', cls: 'tensha' });
+
+                // 己巳の日 (優先) or 巳の日
+                if (etoNum === 5) {
+                    result.push({ label: '己巳の日', cls: 'tsuchinoto-mi' });
+                } else if (shi === 5) {
+                    result.push({ label: '巳の日', cls: 'mi' });
+                }
+
+                // 寅の日
+                if (shi === 2) {
+                    result.push({ label: '寅の日', cls: 'tora' });
+                }
+
+                // 不成就日 (Intl.DateTimeFormatを利用した旧暦計算)
+                // ブラウザの中国暦(chinese)を利用して旧暦の月日を取得
+                try {
+                    const formatter = new Intl.DateTimeFormat('ja-JP-u-ca-chinese', { month: 'numeric', day: 'numeric' });
+                    const parts = formatter.formatToParts(date);
+                    const mPart = parts.find(p => p.type === 'month').value;
+                    const dPart = parts.find(p => p.type === 'day').value;
+                    
+                    const m = parseInt(mPart, 10);
+                    const d = parseInt(dPart, 10);
+                    
+                    // 旧暦月ごとの不成就日開始日 (1月:3日, 2月:2日...)
+                    const startDays = { 1:3, 2:2, 3:1, 4:4, 5:5, 6:6, 7:3, 8:2, 9:1, 10:4, 11:5, 12:6 };
+                    const start = startDays[m];
+                    
+                    if (start && (d === start || d === start + 8 || d === start + 16 || d === start + 24)) {
+                        result.push({ label: '不成就日', cls: 'fujoju' });
+                    }
+                } catch (e) {
+                    console.error('旧暦計算エラー', e);
+                }
+
+                return result;
+            }
+        };
+
         // --- API Service ---
         class ApiService {
             constructor(apiUrl) {
@@ -683,9 +829,32 @@
                 let dayClass = col === 0 ? 'holiday' : (col === 6 ? 'saturday' : (isHoliday ? 'holiday' : ''));
                 if (dateStr === todayStr) dayClass += ' today';
                 
+                // 吉日計算
+                const kichijitsuList = Kichijitsu.get(current);
+                
+                // 3つ以上ある場合は短縮表記にして2列表示
+                let isGridMode = false;
+                if (kichijitsuList.length >= 3) {
+                    isGridMode = true;
+                    const abbrMap = {
+                        '一粒万倍日': '一粒',
+                        '天赦日': '天赦',
+                        '寅の日': '寅',
+                        '巳の日': '巳',
+                        '己巳の日': '己巳',
+                        '不成就日': '不成就'
+                    };
+                    kichijitsuList.forEach(k => { if (abbrMap[k.label]) k.label = abbrMap[k.label]; });
+                }
+
+                const kichijitsuHtml = kichijitsuList.map(k => {
+                    return `<span class="kichijitsu ${k.cls}">${k.label}</span>`;
+                }).join('');
+
                 const numDiv = document.createElement('div');
                 numDiv.className = 'day-number-container';
-                numDiv.innerHTML = `<span class="day-number ${dayClass}">${dayNum}</span>${isHoliday ? `<span class="holiday-name">${this.state.holidays[dateStr]}</span>` : ''}`;
+                const rightClass = isGridMode ? 'day-meta-right grid-mode' : 'day-meta-right';
+                numDiv.innerHTML = `<div class="day-meta-left"><span class="day-number ${dayClass}">${dayNum}</span>${isHoliday ? `<span class="holiday-name">${this.state.holidays[dateStr]}</span>` : ''}</div><div class="${rightClass}">${kichijitsuHtml}</div>`;
                 dayColumn.appendChild(numDiv);
 
                 this.renderEvents(dayColumn, dateStr);
