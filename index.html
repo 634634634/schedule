@@ -122,6 +122,7 @@
             display: flex; align-items: center;
             justify-content: space-between;
             gap: 2px;
+            overflow: hidden;
         }
         .day-meta-left {
             display: flex; align-items: center; gap: 2px;
@@ -129,7 +130,8 @@
         }
         .day-meta-right {
             display: flex; flex-direction: column; align-items: flex-end;
-            flex-shrink: 0;
+            flex-shrink: 1;
+            min-width: 0;
         }
         .day-meta-right.grid-mode {
             display: grid;
@@ -357,95 +359,98 @@
     <script>
         // --- 吉日計算ヘルパー ---
         const Kichijitsu = {
+            // 定数・設定
+            formatter: new Intl.DateTimeFormat('ja-JP-u-ca-chinese', { month: 'numeric', day: 'numeric' }),
+            setsuDays: [6, 4, 6, 5, 6, 6, 7, 8, 8, 8, 7, 7], // 各月の節入り日(近似値)
+            ichimanbaiTable: {
+                1: [0, 3], 2: [1, 6], 3: [2, 9], 4: [0, 3], 5: [3, 4], 6: [5, 6],
+                7: [6, 9], 8: [0, 7], 9: [3, 8], 10: [6, 9], 11: [9, 10], 12: [0, 11]
+            },
+            fujojuStartDays: { 1:3, 2:2, 3:1, 4:4, 5:5, 6:6, 7:3, 8:2, 9:1, 10:4, 11:5, 12:6 },
+            abbrMap: {
+                '一粒万倍日': '一粒', '天赦日': '天赦', '寅の日': '寅',
+                '巳の日': '巳', '己巳の日': '己巳', '不成就日': '不成就'
+            },
+
             // 日の干支を求める (1900/1/1 = 甲戌(10) を基準)
-            getEto: function(date) {
+            getEto(date) {
                 const base = new Date(1900, 0, 1);
                 const diff = Math.floor((date - base) / (1000 * 60 * 60 * 24));
                 let num = (diff + 10) % 60;
                 if (num < 0) num += 60;
                 return num;
             },
+
             // 節月を求める (簡易計算: 1=小寒〜, 2=立春〜... 12=大雪〜)
-            getSetsuMonth: function(date) {
+            getSetsuMonth(date) {
                 const m = date.getMonth() + 1;
                 const d = date.getDate();
-                // 各月の節入り日(近似値)
-                const setsuDays = [6, 4, 6, 5, 6, 6, 7, 8, 8, 8, 7, 7]; 
                 let month = m - 1; // 0-11
-                if (d < setsuDays[m - 1]) month = (month + 11) % 12;
+                if (d < this.setsuDays[m - 1]) month = (month + 11) % 12;
                 return month + 1; // 1-12
             },
-            get: function(date) {
+
+            get(date) {
                 const etoNum = this.getEto(date);
                 const shi = etoNum % 12; // 十二支 (0:子, 1:丑...)
                 const setsuM = this.getSetsuMonth(date);
                 const result = [];
 
                 // 一粒万倍日 (節月ごとの十二支)
-                // 1:小寒(12月節) -> 子, 卯 (定義:12月)
-                // 2:立春(正月節) -> 丑, 午 (定義:正月)
-                // ...
-                const ichimanbaiTable = {
-                    1: [0, 3],   // 12月節(小寒〜): 子, 卯
-                    2: [1, 6],   // 正月節(立春〜): 丑, 午
-                    3: [2, 9],   // 2月節(啓蟄〜): 寅, 酉
-                    4: [0, 3],   // 3月節(清明〜): 子, 卯
-                    5: [3, 4],   // 4月節(立夏〜): 卯, 辰
-                    6: [5, 6],   // 5月節(芒種〜): 巳, 午
-                    7: [6, 9],   // 6月節(小暑〜): 午, 酉
-                    8: [0, 7],   // 7月節(立秋〜): 子, 未
-                    9: [3, 8],   // 8月節(白露〜): 卯, 申
-                    10: [6, 9],  // 9月節(寒露〜): 午, 酉
-                    11: [9, 10], // 10月節(立冬〜): 酉, 戌
-                    12: [0, 11]  // 11月節(大雪〜): 子, 亥
-                };
-                if (ichimanbaiTable[setsuM] && ichimanbaiTable[setsuM].includes(shi)) {
+                if (this.ichimanbaiTable[setsuM]?.includes(shi)) {
                     result.push({ label: '一粒万倍日', cls: 'ichimanbai' });
                 }
 
                 // 天赦日 (季節と干支)
-                let isTensha = false;
-                if (setsuM >= 2 && setsuM <= 4) { if (etoNum === 14) isTensha = true; } // 春: 戊寅
-                else if (setsuM >= 5 && setsuM <= 7) { if (etoNum === 30) isTensha = true; } // 夏: 甲午
-                else if (setsuM >= 8 && setsuM <= 10) { if (etoNum === 44) isTensha = true; } // 秋: 戊申
-                else { if (etoNum === 0) isTensha = true; } // 冬: 甲子
-                if (isTensha) result.push({ label: '天赦日', cls: 'tensha' });
+                if (this.isTensha(setsuM, etoNum)) {
+                    result.push({ label: '天赦日', cls: 'tensha' });
+                }
 
                 // 己巳の日 (優先) or 巳の日
-                if (etoNum === 5) {
-                    result.push({ label: '己巳の日', cls: 'tsuchinoto-mi' });
-                } else if (shi === 5) {
-                    result.push({ label: '巳の日', cls: 'mi' });
-                }
+                if (etoNum === 5) result.push({ label: '己巳の日', cls: 'tsuchinoto-mi' });
+                else if (shi === 5) result.push({ label: '巳の日', cls: 'mi' });
 
                 // 寅の日
-                if (shi === 2) {
-                    result.push({ label: '寅の日', cls: 'tora' });
-                }
+                if (shi === 2) result.push({ label: '寅の日', cls: 'tora' });
 
                 // 不成就日 (Intl.DateTimeFormatを利用した旧暦計算)
-                // ブラウザの中国暦(chinese)を利用して旧暦の月日を取得
-                try {
-                    const formatter = new Intl.DateTimeFormat('ja-JP-u-ca-chinese', { month: 'numeric', day: 'numeric' });
-                    const parts = formatter.formatToParts(date);
-                    const mPart = parts.find(p => p.type === 'month').value;
-                    const dPart = parts.find(p => p.type === 'day').value;
-                    
-                    const m = parseInt(mPart, 10);
-                    const d = parseInt(dPart, 10);
-                    
-                    // 旧暦月ごとの不成就日開始日 (1月:3日, 2月:2日...)
-                    const startDays = { 1:3, 2:2, 3:1, 4:4, 5:5, 6:6, 7:3, 8:2, 9:1, 10:4, 11:5, 12:6 };
-                    const start = startDays[m];
-                    
-                    if (start && (d === start || d === start + 8 || d === start + 16 || d === start + 24)) {
-                        result.push({ label: '不成就日', cls: 'fujoju' });
-                    }
-                } catch (e) {
-                    console.error('旧暦計算エラー', e);
+                if (this.isFujoju(date)) {
+                    result.push({ label: '不成就日', cls: 'fujoju' });
                 }
 
                 return result;
+            },
+
+            // 天赦日判定
+            isTensha(setsuM, etoNum) {
+                if (setsuM >= 2 && setsuM <= 4) return etoNum === 14; // 春: 戊寅
+                if (setsuM >= 5 && setsuM <= 7) return etoNum === 30; // 夏: 甲午
+                if (setsuM >= 8 && setsuM <= 10) return etoNum === 44; // 秋: 戊申
+                return etoNum === 0; // 冬: 甲子
+            },
+
+            // 不成就日判定
+            isFujoju(date) {
+                try {
+                    const parts = this.formatter.formatToParts(date);
+                    const m = parseInt(parts.find(p => p.type === 'month').value, 10);
+                    const d = parseInt(parts.find(p => p.type === 'day').value, 10);
+                    const start = this.fujojuStartDays[m];
+                    return start && (d === start || d === start + 8 || d === start + 16 || d === start + 24);
+                } catch (e) {
+                    console.error('旧暦計算エラー', e);
+                    return false;
+                }
+            },
+
+            // 表示用に整形したデータを取得（3つ以上で短縮表記）
+            getForDisplay(date) {
+                const list = this.get(date);
+                const isGridMode = list.length >= 3;
+                if (isGridMode) {
+                    list.forEach(k => { if (this.abbrMap[k.label]) k.label = this.abbrMap[k.label]; });
+                }
+                return { list, isGridMode };
             }
         };
 
@@ -498,7 +503,6 @@
                 this.currentMode = 'range';
                 this.isEditing = false;
                 this.sortables = [];
-                this.touchStartX = 0;
             }
 
             init() {
@@ -583,14 +587,6 @@
                 });
 
                 this.ui.calendarView.addEventListener('click', (e) => this.handleCalendarClick(e));
-                
-                // スワイプ操作
-                this.ui.calendarView.addEventListener('touchstart', (e) => {
-                    this.touchStartX = e.changedTouches[0].screenX;
-                }, { passive: true });
-                this.ui.calendarView.addEventListener('touchend', (e) => {
-                    this.handleSwipe(e.changedTouches[0].screenX);
-                }, { passive: true });
             }
 
             // --- API Methods ---
@@ -610,8 +606,12 @@
                 try {
                     const newEvents = await this.api.fetchEvents(start, end);
                     
+                    // 既存イベントから表示範囲外のものを残す
                     this.state.events = this.state.events.filter(e => e.start > end || e.end < start);
-                    this.state.events = this.state.events.concat(newEvents);
+                    
+                    // 新しいイベントを結合し、ソート・描画用のプロパティを事前計算
+                    const combined = this.state.events.concat(newEvents);
+                    this.state.events = combined.map(e => this.enrichEventData(e));
                     
                     this.renderCalendar();
                     this.showStatus('完了', 1000);
@@ -619,6 +619,15 @@
                     this.showStatus('エラー発生', 3000);
                     console.error(e);
                 }
+            }
+
+            // イベントデータに描画用プロパティを付与
+            enrichEventData(e) {
+                e._tsStart = new Date(e.start).getTime();
+                e._tsEnd = new Date(e.end).getTime();
+                e._duration = e._tsEnd - e._tsStart;
+                e._textColor = this.getTextColorForBackground(e.color);
+                return e;
             }
 
             async postEvent(action, eventData, silent = false) {
@@ -649,13 +658,6 @@
                     const dateStr = dayCell.dataset.date;
                     if (dateStr) this.openModal({ start: dateStr, end: dateStr });
                 }
-            }
-
-            handleSwipe(endX) {
-                if (this.isEditing) return; // 編集モード中は誤操作防止のため無効化
-                const threshold = 50;
-                if (endX < this.touchStartX - threshold) this.changeMonth(1); // 左スワイプ（進む）
-                if (endX > this.touchStartX + threshold) this.changeMonth(-1); // 右スワイプ（戻る）
             }
 
             toggleEditMode() {
@@ -700,11 +702,12 @@
 
                 // 1. 日付の更新（移動があった場合）
                 if (oldDateStr !== newDateStr) {
-                    const diffTime = new Date(newDateStr) - new Date(oldDateStr);
+                    // T00:00:00を付与してローカル時間として計算させる（タイムゾーンずれ防止）
+                    const diffTime = new Date(newDateStr + 'T00:00:00') - new Date(oldDateStr + 'T00:00:00');
                     const diffDays = diffTime / (1000 * 60 * 60 * 24);
 
-                    const s = new Date(movedEvent.start);
-                    const e = new Date(movedEvent.end);
+                    const s = new Date(movedEvent.start + 'T00:00:00');
+                    const e = new Date(movedEvent.end + 'T00:00:00'); // 修正: movedEvent.end を使用
                     s.setDate(s.getDate() + diffDays);
                     e.setDate(e.getDate() + diffDays);
                     
@@ -729,13 +732,16 @@
                     }
                 });
 
+                // 更新されたイベント情報を再計算
+                eventsToUpdate.forEach(ev => this.enrichEventData(ev));
+
                 // 3. 保存と再描画
                 this.renderCalendar();
                 
                 if (eventsToUpdate.length > 0) {
                     this.showStatus(`${eventsToUpdate.length}件を保存中...`);
                     try {
-                        await Promise.all(eventsToUpdate.map(ev => this.api.postEvent('upsert', ev)));
+                        for (const ev of eventsToUpdate) await this.api.postEvent('upsert', ev, true);
                         this.showStatus('保存完了', 2000);
                     } catch (e) {
                         this.showStatus('保存失敗', 3000);
@@ -830,22 +836,7 @@
                 if (dateStr === todayStr) dayClass += ' today';
                 
                 // 吉日計算
-                const kichijitsuList = Kichijitsu.get(current);
-                
-                // 3つ以上ある場合は短縮表記にして2列表示
-                let isGridMode = false;
-                if (kichijitsuList.length >= 3) {
-                    isGridMode = true;
-                    const abbrMap = {
-                        '一粒万倍日': '一粒',
-                        '天赦日': '天赦',
-                        '寅の日': '寅',
-                        '巳の日': '巳',
-                        '己巳の日': '己巳',
-                        '不成就日': '不成就'
-                    };
-                    kichijitsuList.forEach(k => { if (abbrMap[k.label]) k.label = abbrMap[k.label]; });
-                }
+                const { list: kichijitsuList, isGridMode } = Kichijitsu.getForDisplay(current);
 
                 const kichijitsuHtml = kichijitsuList.map(k => {
                     return `<span class="kichijitsu ${k.cls}">${k.label}</span>`;
@@ -872,10 +863,9 @@
                         if (orderA !== orderB) return orderA - orderB;
                     }
 
-                    const durA = (new Date(a.end) - new Date(a.start));
-                    const durB = (new Date(b.end) - new Date(b.start));
-                    if (durA !== durB) return durB - durA;
-                    return a.start.localeCompare(b.start);
+                    // 事前計算した値を使用
+                    if (a._duration !== b._duration) return b._duration - a._duration;
+                    return a._tsStart - b._tsStart;
                 });
 
                 dayEvents.forEach(evt => {
@@ -883,7 +873,7 @@
                     div.className = 'event-bar';
                     div.textContent = evt.title;
                     div.style.backgroundColor = evt.color;
-                    div.style.color = this.getTextColorForBackground(evt.color);
+                    div.style.color = evt._textColor || '#fff'; // 事前計算した色を使用
                     div.dataset.eventId = evt.id; // ドラッグ用
 
                     if (evt.start < dateStr && evt.end > dateStr) div.classList.add('is-middle');
@@ -984,7 +974,7 @@
                     id: this.generateUUID(),
                     start: this.formatDate(d),
                     end: this.formatDate(d)
-                }));
+                })).map(e => this.enrichEventData(e)); // 事前計算
 
                 this.state.events.push(...newEvents);
                 this.renderCalendar();
@@ -992,7 +982,15 @@
                 this.closeModal();
 
                 this.showStatus('一括保存中...');
-                newEvents.forEach(evt => this.postEvent('upsert', evt, true));
+                // GASの負荷軽減のため直列実行に変更
+                try {
+                    for (const evt of newEvents) {
+                        await this.postEvent('upsert', evt, true);
+                    }
+                    this.showStatus('保存完了', 2000);
+                } catch (e) {
+                    this.showStatus('保存失敗', 3000);
+                }
             }
 
             async saveSingleEvent() {
@@ -1008,6 +1006,9 @@
                 if (!data.title || !data.start) { alert('タイトルと開始日は必須です'); return; }
                 if (data.start > data.end) { alert('終了日は開始日より後にしてください'); return; }
 
+                // 描画用データを付与
+                this.enrichEventData(data);
+
                 const idx = this.state.events.findIndex(e => e.id === data.id);
                 if (idx > -1) this.state.events[idx] = { ...this.state.events[idx], ...data };
                 else this.state.events.push(data);
@@ -1016,7 +1017,7 @@
                 this.state.initialForm = {};
                 this.closeModal();
 
-                this.postEvent('upsert', data);
+                await this.postEvent('upsert', data);
             }
 
             deleteEvent() {
