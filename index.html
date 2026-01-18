@@ -103,6 +103,9 @@
             transition: background 0.2s; cursor: pointer;
         }
         .day-cell-bg:hover { background-color: #f0f8ff; }
+        .day-cell-bg.today {
+            box-shadow: inset 0 0 0 2px #00bfff; /* 今日の枠線強調 */
+        }
         
         .week-content {
             position: relative; z-index: 1;
@@ -156,8 +159,7 @@
         .day-number.holiday { color: var(--holiday-color); }
         .day-number.saturday { color: var(--saturday-color); }
         .day-number.today {
-            background-color: var(--primary-color);
-            color: #fff !important;
+            font-weight: bold;
         }
 
         /* --- 祝日名 --- */
@@ -582,9 +584,12 @@
 
                 this.datePicker = flatpickr("#input-range", {
                     mode: mode,
-                    locale: "ja",
-                    dateFormat: "Y-m-d",
-                    conjunction: mode === 'range' ? " ～ " : ", ",
+                    locale: {
+                        ...flatpickr.l10ns.ja,
+                        rangeSeparator: ' ～ '
+                    },
+                    dateFormat: "Y/m/d",
+                    conjunction: mode === 'range' ? "～" : ", ",
                     onChange: (selectedDates, dateStr, instance) => {
                         if (mode === 'range' && selectedDates.length > 0) {
                             this.ui.inputs.start.value = this.formatDate(selectedDates[0]);
@@ -845,7 +850,8 @@
                 // Background Cell
                 const bgCell = document.createElement('div');
                 bgCell.className = 'day-cell-bg';
-                if (current.getMonth() !== m) bgCell.style.backgroundColor = '#f9f9f9';
+                if (dateStr === todayStr) bgCell.classList.add('today');
+                else if (current.getMonth() !== m) bgCell.style.backgroundColor = '#f9f9f9';
                 bgCell.dataset.date = dateStr; // イベント委譲用にデータを埋め込む
                 weekBg.appendChild(bgCell);
 
